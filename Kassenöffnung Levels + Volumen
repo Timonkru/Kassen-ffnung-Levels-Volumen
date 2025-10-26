@@ -23,11 +23,7 @@ showVolEU4th = input.bool(true, "EU 4. Candle Durchbrüche", group="Volumen-Anal
 showVolUS4th = input.bool(true, "US 4. Candle Durchbrüche", group="Volumen-Analyse")
 showVol15Min = input.bool(true, "15-Min Durchbrüche", group="Volumen-Analyse")
 volThreshold = input.float(1.5, "Volumen-Schwellenwert (x Durchschnitt)", minval=1.0, maxval=3.0, step=0.1, group="Volumen-Analyse")
-volPeriod = input.int(20, "Durchschnitts-Periode (Durchbrüche)", minval=5, maxval=100, group="Volumen-Analyse")
-
-// Längere Periode für Climax/Erschöpfung
-volPeriodLong = input.int(50, "Durchschnitts-Periode (Climax/Erschöpfung)", minval=20, maxval=200, group="Volumen-Analyse",
-     tooltip="Längere Periode glättet tageszeit-bedingte Volumen-Schwankungen")
+volPeriod = input.int(20, "Durchschnitts-Periode", minval=5, maxval=100, group="Volumen-Analyse")
 
 // === DURCHBRUCHS-BESTÄTIGUNG ===
 breakoutMode = input.string("Volumen-Bestätigt", "Durchbruchs-Modus", 
@@ -36,39 +32,11 @@ breakoutVolThreshold = input.float(1.0, "Min. Volumen für Durchbruch (x Durchsc
      minval=0.5, maxval=2.0, step=0.1, group="Durchbruchs-Bestätigung",
      tooltip="Durchbruch wird nur gezählt wenn Volumen über diesem Wert liegt")
 
-// === WENDEPUNKT-ERKENNUNG ===
-showClimax = input.bool(true, "Zeige Volumen-Climax", group="Wendepunkt-Erkennung",
-     tooltip="Markiert extreme Volumen-Spikes NACH Level-Durchbruch")
-climaxThreshold = input.float(2.5, "Climax Schwellenwert (x Durchschnitt)", 
-     minval=1.3, maxval=4.0, step=0.1, group="Wendepunkt-Erkennung")
-climaxMinMove = input.float(30, "Min. Bewegung für Climax (Punkte)", 
-     minval=10, maxval=100, step=5, group="Wendepunkt-Erkennung",
-     tooltip="Wie weit muss Preis vom Durchbruch gelaufen sein")
-
-showExhaustion = input.bool(true, "Zeige Erschöpfung", group="Wendepunkt-Erkennung",
-     tooltip="Warnt wenn Volumen nach Level-Durchbruch und Bewegung abnimmt")
-exhaustionVolDrop = input.float(0.6, "Erschöpfung: Max. Volumen (x Durchschnitt)", 
-     minval=0.3, maxval=1.0, step=0.1, group="Wendepunkt-Erkennung")
-exhaustionMinMove = input.float(40, "Erschöpfung: Min. Bewegung (Punkte)", 
-     minval=20, maxval=150, step=5, group="Wendepunkt-Erkennung",
-     tooltip="Wie weit muss Preis vom Durchbruch gelaufen sein")
-exhaustionMaxBars = input.int(20, "Erschöpfung: Max. Bars seit Durchbruch", 
-     minval=5, maxval=50, group="Wendepunkt-Erkennung",
-     tooltip="Wie lange nach Durchbruch wird noch geprüft")
-
-// ONR-basierte dynamische Anpassung
-useONRScaling = input.bool(true, "Dynamische Anpassung an ONR-Höhe", group="Wendepunkt-Erkennung",
-     tooltip="Passt Min. Bewegung an die Höhe der Overnight Range an")
-onrMultiplier = input.float(1.5, "ONR Multiplikator für Min. Bewegung", 
-     minval=0.5, maxval=3.0, step=0.1, group="Wendepunkt-Erkennung",
-     tooltip="Bewegung muss X-mal so groß sein wie ONR-Höhe")
-
 // Timezone
 tz = "Europe/Berlin"
 
 // Berechne Volumen-Durchschnitte für aktuellen Timeframe (einmal pro Bar)
 currentAvgVol = ta.sma(volume, volPeriod)
-currentAvgVolLong = ta.sma(volume, volPeriodLong)  // Längerer Durchschnitt für Climax/Erschöpfung
 
 // Volumen-Funktion
 getVolLabel(vol, avgVol) =>
@@ -81,107 +49,6 @@ getVolLabel(vol, avgVol) =>
 // Prüfe ob Volumen ausreichend für Durchbruch
 isBreakoutConfirmed(vol, avgVol) =>
     breakoutMode == "Sofort" or vol >= avgVol * breakoutVolThreshold
-
-// === WENDEPUNKT-FUNKTIONEN ===
-
-// Tracking von aktiven Bewegungen
-var float activeBreakoutPrice = na
-var int activeBreakoutBar = na
-var bool inActiveMove = false
-var string activeDirection = ""  // "up" oder "down"
-
-// Update: Prüfe ob wir in einer aktiven Bewegung sind nach Durchbruch
-updateActiveMove() =>
-    // Prüfe ob gerade ein Durchbruch stattgefunden hat
-    justBrokeOut = false
-    breakoutPrice = close
-    direction = ""
-    
-    // Check alle unsere Levels
-    if not na(euH15) and close > euH15 and close[1] <= euH15
-        justBrokeOut := true
-        breakoutPrice := euH15
-        direction := "up"
-    
-    if not na(euL15) and close < euL15 and close[1] >= euL15
-        justBrokeOut := true
-        breakoutPrice := euL15
-        direction := "down"
-    
-    if not na(usH15) and close > usH15 and close[1] <= usH15
-        justBrokeOut := true
-        breakoutPrice := usH15
-        direction := "up"
-    
-    if not na(usL15) and close < usL15 and close[1] >= usL15
-        justBrokeOut := true
-        breakoutPrice := usL15
-        direction := "down"
-    
-    if not na(eu5FourthHigh) and close > eu5FourthHigh and close[1] <= eu5FourthHigh
-        justBrokeOut := true
-        breakoutPrice := eu5FourthHigh
-        direction := "up"
-    
-    if not na(eu5FourthLow) and close < eu5FourthLow and close[1] >= eu5FourthLow
-        justBrokeOut := true
-        breakoutPrice := eu5FourthLow
-        direction := "down"
-    
-    if not na(us5FourthHigh) and close > us5FourthHigh and close[1] <= us5FourthHigh
-        justBrokeOut := true
-        breakoutPrice := us5FourthHigh
-        direction := "up"
-    
-    if not na(us5FourthLow) and close < us5FourthLow and close[1] >= us5FourthLow
-        justBrokeOut := true
-        breakoutPrice := us5FourthLow
-        direction := "down"
-    
-    // Wenn neuer Durchbruch, starte Tracking
-    if justBrokeOut
-        activeBreakoutPrice := breakoutPrice
-        activeBreakoutBar := bar_index
-        inActiveMove := true
-        activeDirection := direction
-    
-    // Beende Tracking nach zu vielen Bars
-    if inActiveMove and bar_index - activeBreakoutBar > exhaustionMaxBars
-        inActiveMove := false
-    
-    [inActiveMove, activeBreakoutPrice, activeBreakoutBar, activeDirection]
-
-// Volumen-Climax während aktiver Bewegung
-checkClimaxInMove(inMove, breakoutPrice, direction) =>
-    if not inMove or na(breakoutPrice)
-        [false, 0.0]
-    else
-        // Berechne Distanz vom Durchbruch
-        moveDistance = direction == "up" ? close - breakoutPrice : breakoutPrice - close
-        
-        // Prüfe Bedingungen
-        enoughMove = moveDistance >= climaxMinMove
-        highVolume = volume >= currentAvgVolLong * climaxThreshold
-        
-        [enoughMove and highVolume, moveDistance]
-
-// Erschöpfung während aktiver Bewegung
-checkExhaustionInMove(inMove, breakoutPrice, direction) =>
-    if not inMove or na(breakoutPrice)
-        [false, 0.0]
-    else
-        // Berechne Distanz vom Durchbruch
-        moveDistance = direction == "up" ? close - breakoutPrice : breakoutPrice - close
-        
-        // Prüfe Bedingungen
-        enoughMove = moveDistance >= exhaustionMinMove
-        lowVolume = volume < currentAvgVolLong * exhaustionVolDrop
-        
-        // Preis stagniert oder dreht
-        momentum = math.abs(close - close[3])
-        isStalling = momentum < 10  // Weniger als 10 Punkte in 3 Bars
-        
-        [enoughMove and lowVolume and isStalling, moveDistance]
 
 // === 15-MINUTEN CANDLES ===
 [time15, high15, low15, open15, close15, vol15] = request.security(syminfo.tickerid, "15", [time, high, low, open, close, volume])
@@ -423,30 +290,3 @@ if show5MinUS and not na(us5FourthHigh) and showVolUS4th
 // Marker nur für 15-Min Chart
 plotshape(isEU15 and showEU and timeframe.period == "15", "EU 15min", shape.triangleup, location.belowbar, euColor, size=size.small)
 plotshape(isUS15 and showUS and timeframe.period == "15", "US 15min", shape.triangleup, location.belowbar, usColor, size=size.small)
-
-// === WENDEPUNKT-ERKENNUNG ===
-
-// Update aktive Bewegung
-[inMove, breakoutPrice, breakoutBar, direction] = updateActiveMove()
-
-// Volumen-Climax während aktiver Bewegung
-[isClimaxNow, climaxDist] = checkClimaxInMove(inMove, breakoutPrice, direction)
-if showClimax and isClimaxNow
-    climaxColor = direction == "up" ? color.new(color.purple, 0) : color.new(color.fuchsia, 0)
-    climaxText = "🔥 CLIMAX\n" + str.tostring(math.round(climaxDist)) + " Pkt | " + str.tostring(math.round((volume / currentAvgVolLong) * 100)) + "%"
-    labelStyle = direction == "up" ? label.style_label_down : label.style_label_up
-    labelY = direction == "up" ? high : low
-    
-    label.new(bar_index, labelY, climaxText, color=climaxColor, textcolor=color.white, 
-              style=labelStyle, size=size.normal)
-
-// Erschöpfungs-Warnung während aktiver Bewegung
-[isExhaustedNow, exhaustDist] = checkExhaustionInMove(inMove, breakoutPrice, direction)
-if showExhaustion and isExhaustedNow
-    exhaustColor = color.new(color.yellow, 0)
-    exhaustText = "⚠️ ERSCHÖPFUNG\n" + str.tostring(math.round(exhaustDist)) + " Pkt | " + str.tostring(math.round((volume / currentAvgVolLong) * 100)) + "%"
-    labelStyle = direction == "up" ? label.style_label_down : label.style_label_up
-    labelY = direction == "up" ? high : low
-    
-    label.new(bar_index, labelY, exhaustText, color=exhaustColor, textcolor=color.black, 
-              style=labelStyle, size=size.normal)
