@@ -1,0 +1,452 @@
+//@version=5
+indicator("Kassenöffnung Levels + Volumen", overlay=true, max_lines_count=20, max_boxes_count=10, max_labels_count=50)
+
+// === EINSTELLUNGEN 15-MIN ===
+showEU = input.bool(true, "EU Märkte", group="15-Min Candles (2. Candle)")
+showUS = input.bool(true, "US Märkte & Gold", group="15-Min Candles (2. Candle)")
+euColor = input.color(color.blue, "EU Farbe", group="15-Min Candles (2. Candle)")
+usColor = input.color(color.orange, "US/Gold Farbe", group="15-Min Candles (2. Candle)")
+lineWidth = input.int(2, "Linienbreite", minval=1, maxval=5, group="15-Min Candles (2. Candle)")
+
+// === EINSTELLUNGEN 5-MIN ===
+show5MinEU = input.bool(true, "EU 5-Min Levels", group="5-Min Candles (1. & 4. Candle)")
+show5MinUS = input.bool(true, "US 5-Min Levels", group="5-Min Candles (1. & 4. Candle)")
+showEU1stLow = input.bool(true, "Zeige EU 1. Candle Low", group="5-Min Candles (1. & 4. Candle)")
+showUS1stLow = input.bool(true, "Zeige US 1. Candle Low", group="5-Min Candles (1. & 4. Candle)")
+eu5MinColor = input.color(color.green, "EU 5-Min Farbe", group="5-Min Candles (1. & 4. Candle)")
+us5MinColor = input.color(color.red, "US 5-Min Farbe", group="5-Min Candles (1. & 4. Candle)")
+
+// === VOLUMEN-ANALYSE ===
+showVolEU1st = input.bool(true, "EU 1. Candle Volumen", group="Volumen-Analyse")
+showVolUS1st = input.bool(true, "US 1. Candle Volumen", group="Volumen-Analyse")
+showVolEU4th = input.bool(true, "EU 4. Candle Durchbrüche", group="Volumen-Analyse")
+showVolUS4th = input.bool(true, "US 4. Candle Durchbrüche", group="Volumen-Analyse")
+showVol15Min = input.bool(true, "15-Min Durchbrüche", group="Volumen-Analyse")
+volThreshold = input.float(1.5, "Volumen-Schwellenwert (x Durchschnitt)", minval=1.0, maxval=3.0, step=0.1, group="Volumen-Analyse")
+volPeriod = input.int(20, "Durchschnitts-Periode (Durchbrüche)", minval=5, maxval=100, group="Volumen-Analyse")
+
+// Längere Periode für Climax/Erschöpfung
+volPeriodLong = input.int(50, "Durchschnitts-Periode (Climax/Erschöpfung)", minval=20, maxval=200, group="Volumen-Analyse",
+     tooltip="Längere Periode glättet tageszeit-bedingte Volumen-Schwankungen")
+
+// === DURCHBRUCHS-BESTÄTIGUNG ===
+breakoutMode = input.string("Volumen-Bestätigt", "Durchbruchs-Modus", 
+     options=["Sofort", "Volumen-Bestätigt"], group="Durchbruchs-Bestätigung")
+breakoutVolThreshold = input.float(1.0, "Min. Volumen für Durchbruch (x Durchschnitt)", 
+     minval=0.5, maxval=2.0, step=0.1, group="Durchbruchs-Bestätigung",
+     tooltip="Durchbruch wird nur gezählt wenn Volumen über diesem Wert liegt")
+
+// === WENDEPUNKT-ERKENNUNG ===
+showClimax = input.bool(true, "Zeige Volumen-Climax", group="Wendepunkt-Erkennung",
+     tooltip="Markiert extreme Volumen-Spikes NACH Level-Durchbruch")
+climaxThreshold = input.float(2.5, "Climax Schwellenwert (x Durchschnitt)", 
+     minval=1.3, maxval=4.0, step=0.1, group="Wendepunkt-Erkennung")
+climaxMinMove = input.float(30, "Min. Bewegung für Climax (Punkte)", 
+     minval=10, maxval=100, step=5, group="Wendepunkt-Erkennung",
+     tooltip="Wie weit muss Preis vom Durchbruch gelaufen sein")
+
+showExhaustion = input.bool(true, "Zeige Erschöpfung", group="Wendepunkt-Erkennung",
+     tooltip="Warnt wenn Volumen nach Level-Durchbruch und Bewegung abnimmt")
+exhaustionVolDrop = input.float(0.6, "Erschöpfung: Max. Volumen (x Durchschnitt)", 
+     minval=0.3, maxval=1.0, step=0.1, group="Wendepunkt-Erkennung")
+exhaustionMinMove = input.float(40, "Erschöpfung: Min. Bewegung (Punkte)", 
+     minval=20, maxval=150, step=5, group="Wendepunkt-Erkennung",
+     tooltip="Wie weit muss Preis vom Durchbruch gelaufen sein")
+exhaustionMaxBars = input.int(20, "Erschöpfung: Max. Bars seit Durchbruch", 
+     minval=5, maxval=50, group="Wendepunkt-Erkennung",
+     tooltip="Wie lange nach Durchbruch wird noch geprüft")
+
+// ONR-basierte dynamische Anpassung
+useONRScaling = input.bool(true, "Dynamische Anpassung an ONR-Höhe", group="Wendepunkt-Erkennung",
+     tooltip="Passt Min. Bewegung an die Höhe der Overnight Range an")
+onrMultiplier = input.float(1.5, "ONR Multiplikator für Min. Bewegung", 
+     minval=0.5, maxval=3.0, step=0.1, group="Wendepunkt-Erkennung",
+     tooltip="Bewegung muss X-mal so groß sein wie ONR-Höhe")
+
+// Timezone
+tz = "Europe/Berlin"
+
+// Berechne Volumen-Durchschnitte für aktuellen Timeframe (einmal pro Bar)
+currentAvgVol = ta.sma(volume, volPeriod)
+currentAvgVolLong = ta.sma(volume, volPeriodLong)  // Längerer Durchschnitt für Climax/Erschöpfung
+
+// Volumen-Funktion
+getVolLabel(vol, avgVol) =>
+    relVol = (vol / avgVol) * 100
+    volText = str.tostring(math.round(relVol)) + "% Vol"
+    volColor = vol > avgVol * volThreshold ? color.green : vol > avgVol ? color.orange : color.red
+    volSymbol = vol > avgVol * volThreshold ? "✓ " : vol > avgVol ? "⚠ " : "✗ "
+    [volText, volColor, volSymbol, relVol]
+
+// Prüfe ob Volumen ausreichend für Durchbruch
+isBreakoutConfirmed(vol, avgVol) =>
+    breakoutMode == "Sofort" or vol >= avgVol * breakoutVolThreshold
+
+// === WENDEPUNKT-FUNKTIONEN ===
+
+// Tracking von aktiven Bewegungen
+var float activeBreakoutPrice = na
+var int activeBreakoutBar = na
+var bool inActiveMove = false
+var string activeDirection = ""  // "up" oder "down"
+
+// Update: Prüfe ob wir in einer aktiven Bewegung sind nach Durchbruch
+updateActiveMove() =>
+    // Prüfe ob gerade ein Durchbruch stattgefunden hat
+    justBrokeOut = false
+    breakoutPrice = close
+    direction = ""
+    
+    // Check alle unsere Levels
+    if not na(euH15) and close > euH15 and close[1] <= euH15
+        justBrokeOut := true
+        breakoutPrice := euH15
+        direction := "up"
+    
+    if not na(euL15) and close < euL15 and close[1] >= euL15
+        justBrokeOut := true
+        breakoutPrice := euL15
+        direction := "down"
+    
+    if not na(usH15) and close > usH15 and close[1] <= usH15
+        justBrokeOut := true
+        breakoutPrice := usH15
+        direction := "up"
+    
+    if not na(usL15) and close < usL15 and close[1] >= usL15
+        justBrokeOut := true
+        breakoutPrice := usL15
+        direction := "down"
+    
+    if not na(eu5FourthHigh) and close > eu5FourthHigh and close[1] <= eu5FourthHigh
+        justBrokeOut := true
+        breakoutPrice := eu5FourthHigh
+        direction := "up"
+    
+    if not na(eu5FourthLow) and close < eu5FourthLow and close[1] >= eu5FourthLow
+        justBrokeOut := true
+        breakoutPrice := eu5FourthLow
+        direction := "down"
+    
+    if not na(us5FourthHigh) and close > us5FourthHigh and close[1] <= us5FourthHigh
+        justBrokeOut := true
+        breakoutPrice := us5FourthHigh
+        direction := "up"
+    
+    if not na(us5FourthLow) and close < us5FourthLow and close[1] >= us5FourthLow
+        justBrokeOut := true
+        breakoutPrice := us5FourthLow
+        direction := "down"
+    
+    // Wenn neuer Durchbruch, starte Tracking
+    if justBrokeOut
+        activeBreakoutPrice := breakoutPrice
+        activeBreakoutBar := bar_index
+        inActiveMove := true
+        activeDirection := direction
+    
+    // Beende Tracking nach zu vielen Bars
+    if inActiveMove and bar_index - activeBreakoutBar > exhaustionMaxBars
+        inActiveMove := false
+    
+    [inActiveMove, activeBreakoutPrice, activeBreakoutBar, activeDirection]
+
+// Volumen-Climax während aktiver Bewegung
+checkClimaxInMove(inMove, breakoutPrice, direction) =>
+    if not inMove or na(breakoutPrice)
+        [false, 0.0]
+    else
+        // Berechne Distanz vom Durchbruch
+        moveDistance = direction == "up" ? close - breakoutPrice : breakoutPrice - close
+        
+        // Prüfe Bedingungen
+        enoughMove = moveDistance >= climaxMinMove
+        highVolume = volume >= currentAvgVolLong * climaxThreshold
+        
+        [enoughMove and highVolume, moveDistance]
+
+// Erschöpfung während aktiver Bewegung
+checkExhaustionInMove(inMove, breakoutPrice, direction) =>
+    if not inMove or na(breakoutPrice)
+        [false, 0.0]
+    else
+        // Berechne Distanz vom Durchbruch
+        moveDistance = direction == "up" ? close - breakoutPrice : breakoutPrice - close
+        
+        // Prüfe Bedingungen
+        enoughMove = moveDistance >= exhaustionMinMove
+        lowVolume = volume < currentAvgVolLong * exhaustionVolDrop
+        
+        // Preis stagniert oder dreht
+        momentum = math.abs(close - close[3])
+        isStalling = momentum < 10  // Weniger als 10 Punkte in 3 Bars
+        
+        [enoughMove and lowVolume and isStalling, moveDistance]
+
+// === 15-MINUTEN CANDLES ===
+[time15, high15, low15, open15, close15, vol15] = request.security(syminfo.tickerid, "15", [time, high, low, open, close, volume])
+avgVol15 = ta.sma(vol15, volPeriod)
+
+isEU15 = hour(time15, tz) == 9 and minute(time15, tz) == 15
+isUS15 = hour(time15, tz) == 15 and minute(time15, tz) == 45
+
+var float euH15 = na
+var float euL15 = na
+var line euHighLine = na
+var line euLowLine = na
+var box euBox = na
+var bool euHighBroken = false
+var bool euLowBroken = false
+
+var float usH15 = na
+var float usL15 = na
+var line usHighLine = na
+var line usLowLine = na
+var box usBox = na
+var bool usHighBroken = false
+var bool usLowBroken = false
+
+// Update EU 15-Min
+if isEU15 and showEU
+    euH15 := high15
+    euL15 := low15
+    euHighBroken := false
+    euLowBroken := false
+    
+    line.delete(euHighLine)
+    line.delete(euLowLine)
+    box.delete(euBox)
+    
+    euBox := box.new(bar_index, high15, bar_index + 1, low15, 
+         border_color=euColor, bgcolor=color.new(euColor, 90), border_width=lineWidth,
+         text="EU 2nd (15min)", text_color=euColor, text_size=size.small)
+    
+    euHighLine := line.new(bar_index, high15, bar_index + 1, high15, 
+         color=euColor, width=lineWidth, extend=extend.right)
+    euLowLine := line.new(bar_index, low15, bar_index + 1, low15, 
+         color=euColor, width=lineWidth, extend=extend.right)
+
+// Check EU 15-Min Durchbrüche
+if showEU and not na(euH15) and showVol15Min
+    // High Durchbruch
+    if close > euH15 and not euHighBroken and isBreakoutConfirmed(volume, currentAvgVol)
+        euHighBroken := true
+        [volText, volColor, volSymbol, relVol] = getVolLabel(volume, currentAvgVol)
+        label.new(bar_index, high, volSymbol + volText, color=volColor, textcolor=color.white, 
+                  style=label.style_label_down, size=size.small)
+    
+    // Low Durchbruch
+    if close < euL15 and not euLowBroken and isBreakoutConfirmed(volume, currentAvgVol)
+        euLowBroken := true
+        [volText, volColor, volSymbol, relVol] = getVolLabel(volume, currentAvgVol)
+        label.new(bar_index, low, volSymbol + volText, color=volColor, textcolor=color.white, 
+                  style=label.style_label_up, size=size.small)
+
+// Update US 15-Min
+if isUS15 and showUS
+    usH15 := high15
+    usL15 := low15
+    usHighBroken := false
+    usLowBroken := false
+    
+    line.delete(usHighLine)
+    line.delete(usLowLine)
+    box.delete(usBox)
+    
+    usBox := box.new(bar_index, high15, bar_index + 1, low15, 
+         border_color=usColor, bgcolor=color.new(usColor, 90), border_width=lineWidth,
+         text="US 2nd (15min)", text_color=usColor, text_size=size.small)
+    
+    usHighLine := line.new(bar_index, high15, bar_index + 1, high15, 
+         color=usColor, width=lineWidth, extend=extend.right)
+    usLowLine := line.new(bar_index, low15, bar_index + 1, low15, 
+         color=usColor, width=lineWidth, extend=extend.right)
+
+// Check US 15-Min Durchbrüche
+if showUS and not na(usH15) and showVol15Min
+    // High Durchbruch
+    if close > usH15 and not usHighBroken and isBreakoutConfirmed(volume, currentAvgVol)
+        usHighBroken := true
+        [volText, volColor, volSymbol, relVol] = getVolLabel(volume, currentAvgVol)
+        label.new(bar_index, high, volSymbol + volText, color=volColor, textcolor=color.white, 
+                  style=label.style_label_down, size=size.small)
+    
+    // Low Durchbruch
+    if close < usL15 and not usLowBroken and isBreakoutConfirmed(volume, currentAvgVol)
+        usLowBroken := true
+        [volText, volColor, volSymbol, relVol] = getVolLabel(volume, currentAvgVol)
+        label.new(bar_index, low, volSymbol + volText, color=volColor, textcolor=color.white, 
+                  style=label.style_label_up, size=size.small)
+
+// === 5-MINUTEN CANDLES ===
+[time5, high5, low5, open5, close5, vol5] = request.security(syminfo.tickerid, "5", [time, high, low, open, close, volume])
+avgVol5 = ta.sma(vol5, volPeriod)
+
+isEU5First = hour(time5, tz) == 9 and minute(time5, tz) == 0
+isEU5Fourth = hour(time5, tz) == 9 and minute(time5, tz) == 15
+
+isUS5First = hour(time5, tz) == 15 and minute(time5, tz) == 30
+isUS5Fourth = hour(time5, tz) == 15 and minute(time5, tz) == 45
+
+var line eu5FirstLine = na
+var line eu5FourthHighLine = na
+var line eu5FourthLowLine = na
+var float eu5FirstLow = na
+var bool eu5FirstBullish = false
+var bool eu5FirstLowBroken = false
+var float eu5FourthHigh = na
+var float eu5FourthLow = na
+var bool eu5FourthHighBroken = false
+var bool eu5FourthLowBroken = false
+
+var line us5FirstLine = na
+var line us5FourthHighLine = na
+var line us5FourthLowLine = na
+var float us5FirstLow = na
+var bool us5FirstBullish = false
+var bool us5FirstLowBroken = false
+var float us5FourthHigh = na
+var float us5FourthLow = na
+var bool us5FourthHighBroken = false
+var bool us5FourthLowBroken = false
+
+// EU 5-Min: 1. Candle
+if isEU5First and show5MinEU
+    eu5FirstLow := low5
+    eu5FirstBullish := close5 > open5
+    eu5FirstLowBroken := false
+    
+    if showEU1stLow
+        line.delete(eu5FirstLine)
+        eu5FirstLine := line.new(bar_index, low5, bar_index + 1, low5, 
+             color=eu5MinColor, width=lineWidth, style=line.style_dashed, extend=extend.right)
+    
+    // Wenn bearish: zeige Volumen der 1. Candle
+    if not eu5FirstBullish and showVolEU1st
+        [volText, volColor, volSymbol, relVol] = getVolLabel(vol5, avgVol5)
+        label.new(bar_index, low5, volSymbol + volText + " (1st)", color=volColor, textcolor=color.white, 
+                  style=label.style_label_up, size=size.small)
+
+// Check EU 1st Low Durchbruch (nur wenn bullish war)
+if show5MinEU and not na(eu5FirstLow) and eu5FirstBullish and not eu5FirstLowBroken and showVolEU1st
+    if close < eu5FirstLow and isBreakoutConfirmed(volume, currentAvgVol)
+        eu5FirstLowBroken := true
+        [volText, volColor, volSymbol, relVol] = getVolLabel(volume, currentAvgVol)
+        label.new(bar_index, low, volSymbol + volText + " (1st break)", color=volColor, textcolor=color.white, 
+                  style=label.style_label_up, size=size.small)
+
+// EU 5-Min: 4. Candle
+if isEU5Fourth and show5MinEU
+    eu5FourthHigh := high5
+    eu5FourthLow := low5
+    eu5FourthHighBroken := false
+    eu5FourthLowBroken := false
+    
+    line.delete(eu5FourthHighLine)
+    line.delete(eu5FourthLowLine)
+    eu5FourthHighLine := line.new(bar_index, high5, bar_index + 1, high5, 
+         color=eu5MinColor, width=lineWidth, extend=extend.right)
+    eu5FourthLowLine := line.new(bar_index, low5, bar_index + 1, low5, 
+         color=eu5MinColor, width=lineWidth, extend=extend.right)
+
+// Check EU 4th Durchbrüche
+if show5MinEU and not na(eu5FourthHigh) and showVolEU4th
+    // High Durchbruch
+    if close > eu5FourthHigh and not eu5FourthHighBroken and isBreakoutConfirmed(volume, currentAvgVol)
+        eu5FourthHighBroken := true
+        [volText, volColor, volSymbol, relVol] = getVolLabel(volume, currentAvgVol)
+        label.new(bar_index, high, volSymbol + volText + " (4th)", color=volColor, textcolor=color.white, 
+                  style=label.style_label_down, size=size.small)
+    
+    // Low Durchbruch
+    if close < eu5FourthLow and not eu5FourthLowBroken and isBreakoutConfirmed(volume, currentAvgVol)
+        eu5FourthLowBroken := true
+        [volText, volColor, volSymbol, relVol] = getVolLabel(volume, currentAvgVol)
+        label.new(bar_index, low, volSymbol + volText + " (4th)", color=volColor, textcolor=color.white, 
+                  style=label.style_label_up, size=size.small)
+
+// US 5-Min: 1. Candle
+if isUS5First and show5MinUS
+    us5FirstLow := low5
+    us5FirstBullish := close5 > open5
+    us5FirstLowBroken := false
+    
+    if showUS1stLow
+        line.delete(us5FirstLine)
+        us5FirstLine := line.new(bar_index, low5, bar_index + 1, low5, 
+             color=us5MinColor, width=lineWidth, style=line.style_dashed, extend=extend.right)
+    
+    // Wenn bearish: zeige Volumen der 1. Candle
+    if not us5FirstBullish and showVolUS1st
+        [volText, volColor, volSymbol, relVol] = getVolLabel(vol5, avgVol5)
+        label.new(bar_index, low5, volSymbol + volText + " (1st)", color=volColor, textcolor=color.white, 
+                  style=label.style_label_up, size=size.small)
+
+// Check US 1st Low Durchbruch (nur wenn bullish war)
+if show5MinUS and not na(us5FirstLow) and us5FirstBullish and not us5FirstLowBroken and showVolUS1st
+    if close < us5FirstLow and isBreakoutConfirmed(volume, currentAvgVol)
+        us5FirstLowBroken := true
+        [volText, volColor, volSymbol, relVol] = getVolLabel(volume, currentAvgVol)
+        label.new(bar_index, low, volSymbol + volText + " (1st break)", color=volColor, textcolor=color.white, 
+                  style=label.style_label_up, size=size.small)
+
+// US 5-Min: 4. Candle
+if isUS5Fourth and show5MinUS
+    us5FourthHigh := high5
+    us5FourthLow := low5
+    us5FourthHighBroken := false
+    us5FourthLowBroken := false
+    
+    line.delete(us5FourthHighLine)
+    line.delete(us5FourthLowLine)
+    us5FourthHighLine := line.new(bar_index, high5, bar_index + 1, high5, 
+         color=us5MinColor, width=lineWidth, extend=extend.right)
+    us5FourthLowLine := line.new(bar_index, low5, bar_index + 1, low5, 
+         color=us5MinColor, width=lineWidth, extend=extend.right)
+
+// Check US 4th Durchbrüche
+if show5MinUS and not na(us5FourthHigh) and showVolUS4th
+    // High Durchbruch
+    if close > us5FourthHigh and not us5FourthHighBroken and isBreakoutConfirmed(volume, currentAvgVol)
+        us5FourthHighBroken := true
+        [volText, volColor, volSymbol, relVol] = getVolLabel(volume, currentAvgVol)
+        label.new(bar_index, high, volSymbol + volText + " (4th)", color=volColor, textcolor=color.white, 
+                  style=label.style_label_down, size=size.small)
+    
+    // Low Durchbruch
+    if close < us5FourthLow and not us5FourthLowBroken and isBreakoutConfirmed(volume, currentAvgVol)
+        us5FourthLowBroken := true
+        [volText, volColor, volSymbol, relVol] = getVolLabel(volume, currentAvgVol)
+        label.new(bar_index, low, volSymbol + volText + " (4th)", color=volColor, textcolor=color.white, 
+                  style=label.style_label_up, size=size.small)
+
+// Marker nur für 15-Min Chart
+plotshape(isEU15 and showEU and timeframe.period == "15", "EU 15min", shape.triangleup, location.belowbar, euColor, size=size.small)
+plotshape(isUS15 and showUS and timeframe.period == "15", "US 15min", shape.triangleup, location.belowbar, usColor, size=size.small)
+
+// === WENDEPUNKT-ERKENNUNG ===
+
+// Update aktive Bewegung
+[inMove, breakoutPrice, breakoutBar, direction] = updateActiveMove()
+
+// Volumen-Climax während aktiver Bewegung
+[isClimaxNow, climaxDist] = checkClimaxInMove(inMove, breakoutPrice, direction)
+if showClimax and isClimaxNow
+    climaxColor = direction == "up" ? color.new(color.purple, 0) : color.new(color.fuchsia, 0)
+    climaxText = "🔥 CLIMAX\n" + str.tostring(math.round(climaxDist)) + " Pkt | " + str.tostring(math.round((volume / currentAvgVolLong) * 100)) + "%"
+    labelStyle = direction == "up" ? label.style_label_down : label.style_label_up
+    labelY = direction == "up" ? high : low
+    
+    label.new(bar_index, labelY, climaxText, color=climaxColor, textcolor=color.white, 
+              style=labelStyle, size=size.normal)
+
+// Erschöpfungs-Warnung während aktiver Bewegung
+[isExhaustedNow, exhaustDist] = checkExhaustionInMove(inMove, breakoutPrice, direction)
+if showExhaustion and isExhaustedNow
+    exhaustColor = color.new(color.yellow, 0)
+    exhaustText = "⚠️ ERSCHÖPFUNG\n" + str.tostring(math.round(exhaustDist)) + " Pkt | " + str.tostring(math.round((volume / currentAvgVolLong) * 100)) + "%"
+    labelStyle = direction == "up" ? label.style_label_down : label.style_label_up
+    labelY = direction == "up" ? high : low
+    
+    label.new(bar_index, labelY, exhaustText, color=exhaustColor, textcolor=color.black, 
+              style=labelStyle, size=size.normal)
