@@ -1,5 +1,5 @@
 //@version=6
-indicator('Kassenöffnung Levels + Volumen', overlay = true, max_lines_count = 20, max_boxes_count = 10, max_labels_count = 50)
+indicator('Kassenöffnung Levels + Volumen', overlay = true, max_lines_count = 30, max_boxes_count = 15, max_labels_count = 60)
 
 // === EINSTELLUNGEN 15-MIN ===
 showEU       = input.bool(true,  'EU Märkte aktiv',           group = '15-Min Candles')
@@ -19,6 +19,20 @@ showEU1stLow = input.bool(true,  'Zeige EU 1. Candle Low',    group = '5-Min Can
 showUS1stLow = input.bool(true,  'Zeige US 1. Candle Low',    group = '5-Min Candles (1. & 4. Candle)')
 eu5MinColor  = input.color(color.green, 'EU 5-Min Farbe',     group = '5-Min Candles (1. & 4. Candle)')
 us5MinColor  = input.color(color.red,   'US 5-Min Farbe',     group = '5-Min Candles (1. & 4. Candle)')
+
+// === NEU: PRE-MARKET LEVELS ===
+showPreMarket30 = input.bool(true, 'Zeige 30-Min Low vor Kasse', group = 'Pre-Market Levels')
+showPreMarket10 = input.bool(true, 'Zeige 10-Min High/Low vor Kasse', group = 'Pre-Market Levels')
+preMarket30Color = input.color(color.purple, '30-Min Level Farbe', group = 'Pre-Market Levels')
+preMarket10Color = input.color(color.yellow, '10-Min Level Farbe', group = 'Pre-Market Levels')
+
+// === NEU: SPEZIAL-EVENTS (FOMC/NFP) ===
+enableSpecialEvent = input.bool(false, 'Event-Modus aktiv', group = 'Special Events (FOMC/NFP)')
+eventHour = input.int(14, 'Event Stunde', minval = 0, maxval = 23, group = 'Special Events (FOMC/NFP)', tooltip = 'Z.B. 14 für 14:00 Uhr')
+eventMinute = input.int(30, 'Event Minute', minval = 0, maxval = 59, group = 'Special Events (FOMC/NFP)', tooltip = 'Z.B. 30 für :30')
+showEvent4th5Min = input.bool(true, 'Zeige 4. Candle nach Event (5-Min)', group = 'Special Events (FOMC/NFP)')
+showEvent4th10Min = input.bool(true, 'Zeige 4. Candle nach Event (10-Min)', group = 'Special Events (FOMC/NFP)')
+eventColor = input.color(color.fuchsia, 'Event Level Farbe', group = 'Special Events (FOMC/NFP)')
 
 // === VOLUMEN-ANALYSE ===
 showVolEU1st  = input.bool(true, 'EU 1. Candle Volumen',      group = 'Volumen-Analyse')
@@ -213,6 +227,57 @@ plotshape(isEU15_7th and showEU and showEU_7th15 and timeframe.period == '15', '
 plotshape(isUS15_2nd and showUS and showUS_2nd15 and timeframe.period == '15', 'US 15min 2nd', shape.triangleup,   location.belowbar, usColor, size = size.small)
 plotshape(isUS15_7th and showUS and showUS_7th15 and timeframe.period == '15', 'US 15min 7th', shape.triangledown, location.abovebar, usColor, size = size.small)
 
+// === NEU: PRE-MARKET LEVELS (30-MIN & 10-MIN) ===
+[time30, high30, low30, vol30] = request.security(syminfo.tickerid, '30', [time, high, low, volume])
+[time10, high10, low10, vol10] = request.security(syminfo.tickerid, '10', [time, high, low, volume])
+
+// 30-Min Bar vor EU-Kasse (08:30)
+isEU30PreMarket = hour(time30, tz) == 8 and minute(time30, tz) == 30
+// 30-Min Bar vor US-Kasse (15:00)
+isUS30PreMarket = hour(time30, tz) == 15 and minute(time30, tz) == 0
+
+// 10-Min Bar vor EU-Kasse (08:50)
+isEU10PreMarket = hour(time10, tz) == 8 and minute(time10, tz) == 50
+// 10-Min Bar vor US-Kasse (15:20)
+isUS10PreMarket = hour(time10, tz) == 15 and minute(time10, tz) == 20
+
+var line eu30PreLine = na
+var line us30PreLine = na
+var line eu10PreHighLine = na
+var line eu10PreLowLine = na
+var line us10PreHighLine = na
+var line us10PreLowLine = na
+
+// EU 30-Min Pre-Market Low
+if isEU30PreMarket and showEU and showPreMarket30
+    line.delete(eu30PreLine)
+    eu30PreLine := line.new(bar_index, low30, bar_index + 1, low30, color = preMarket30Color, width = lineWidth, style = line.style_dotted, extend = extend.right)
+    label.new(bar_index, low30, 'EU 30m Pre-Low', color = preMarket30Color, textcolor = color.white, style = label.style_label_up, size = size.tiny)
+
+// US 30-Min Pre-Market Low
+if isUS30PreMarket and showUS and showPreMarket30
+    line.delete(us30PreLine)
+    us30PreLine := line.new(bar_index, low30, bar_index + 1, low30, color = preMarket30Color, width = lineWidth, style = line.style_dotted, extend = extend.right)
+    label.new(bar_index, low30, 'US 30m Pre-Low', color = preMarket30Color, textcolor = color.white, style = label.style_label_up, size = size.tiny)
+
+// EU 10-Min Pre-Market High/Low
+if isEU10PreMarket and showEU and showPreMarket10
+    line.delete(eu10PreHighLine)
+    line.delete(eu10PreLowLine)
+    eu10PreHighLine := line.new(bar_index, high10, bar_index + 1, high10, color = preMarket10Color, width = lineWidth, style = line.style_dotted, extend = extend.right)
+    eu10PreLowLine := line.new(bar_index, low10, bar_index + 1, low10, color = preMarket10Color, width = lineWidth, style = line.style_dotted, extend = extend.right)
+    label.new(bar_index, high10, 'EU 10m Pre-H', color = preMarket10Color, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+    label.new(bar_index, low10, 'EU 10m Pre-L', color = preMarket10Color, textcolor = color.white, style = label.style_label_up, size = size.tiny)
+
+// US 10-Min Pre-Market High/Low
+if isUS10PreMarket and showUS and showPreMarket10
+    line.delete(us10PreHighLine)
+    line.delete(us10PreLowLine)
+    us10PreHighLine := line.new(bar_index, high10, bar_index + 1, high10, color = preMarket10Color, width = lineWidth, style = line.style_dotted, extend = extend.right)
+    us10PreLowLine := line.new(bar_index, low10, bar_index + 1, low10, color = preMarket10Color, width = lineWidth, style = line.style_dotted, extend = extend.right)
+    label.new(bar_index, high10, 'US 10m Pre-H', color = preMarket10Color, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+    label.new(bar_index, low10, 'US 10m Pre-L', color = preMarket10Color, textcolor = color.white, style = label.style_label_up, size = size.tiny)
+
 // === 5-MINUTEN CANDLES ===
 [time5, high5, low5, open5, close5, vol5] = request.security(syminfo.tickerid, '5', [time, high, low, open, close, volume])
 avgVol5 = ta.sma(vol5, volPeriod)
@@ -333,3 +398,72 @@ if show5MinUS and showUS and not na(us5FourthHigh) and showVolUS4th
         us5FourthLowBroken := true
         [volText, volColor, volSymbol, relVol] = getVolLabel(volume, currentAvgVol)
         label.new(bar_index, low, volSymbol + volText + ' (4th)', color = volColor, textcolor = color.white, style = label.style_label_up, size = size.small)
+
+// === NEU: SPECIAL EVENT LEVELS (FOMC/NFP) ===
+// 4. Candle nach Event-Zeit (5-Min)
+isEvent5Fourth = enableSpecialEvent and hour(time5, tz) == eventHour and minute(time5, tz) == eventMinute + 15
+
+var line event5HighLine = na
+var line event5LowLine = na
+var float event5High = na
+var float event5Low = na
+var bool event5HighBroken = false
+var bool event5LowBroken = false
+
+if isEvent5Fourth and showEvent4th5Min
+    event5High := high5
+    event5Low := low5
+    event5HighBroken := false
+    event5LowBroken := false
+    
+    line.delete(event5HighLine)
+    line.delete(event5LowLine)
+    event5HighLine := line.new(bar_index, high5, bar_index + 1, high5, color = eventColor, width = lineWidth, extend = extend.right)
+    event5LowLine := line.new(bar_index, low5, bar_index + 1, low5, color = eventColor, width = lineWidth, extend = extend.right)
+    label.new(bar_index, high5, 'Event 4th (5m)', color = eventColor, textcolor = color.white, style = label.style_label_down, size = size.small)
+
+// Check Event 5-Min Durchbrüche
+if enableSpecialEvent and showEvent4th5Min and not na(event5High)
+    if close > event5High and not event5HighBroken and isBreakoutConfirmed(volume, currentAvgVol)
+        event5HighBroken := true
+        [volText, volColor, volSymbol, relVol] = getVolLabel(volume, currentAvgVol)
+        label.new(bar_index, high, volSymbol + volText + ' (Event 5m)', color = volColor, textcolor = color.white, style = label.style_label_down, size = size.small)
+
+    if close < event5Low and not event5LowBroken and isBreakoutConfirmed(volume, currentAvgVol)
+        event5LowBroken := true
+        [volText, volColor, volSymbol, relVol] = getVolLabel(volume, currentAvgVol)
+        label.new(bar_index, low, volSymbol + volText + ' (Event 5m)', color = volColor, textcolor = color.white, style = label.style_label_up, size = size.small)
+
+// 4. Candle nach Event-Zeit (10-Min)
+isEvent10Fourth = enableSpecialEvent and hour(time10, tz) == eventHour and minute(time10, tz) == eventMinute + 30
+
+var line event10HighLine = na
+var line event10LowLine = na
+var float event10High = na
+var float event10Low = na
+var bool event10HighBroken = false
+var bool event10LowBroken = false
+
+if isEvent10Fourth and showEvent4th10Min
+    event10High := high10
+    event10Low := low10
+    event10HighBroken := false
+    event10LowBroken := false
+    
+    line.delete(event10HighLine)
+    line.delete(event10LowLine)
+    event10HighLine := line.new(bar_index, high10, bar_index + 1, high10, color = eventColor, width = lineWidth, extend = extend.right)
+    event10LowLine := line.new(bar_index, low10, bar_index + 1, low10, color = eventColor, width = lineWidth, extend = extend.right)
+    label.new(bar_index, high10, 'Event 4th (10m)', color = eventColor, textcolor = color.white, style = label.style_label_down, size = size.small)
+
+// Check Event 10-Min Durchbrüche
+if enableSpecialEvent and showEvent4th10Min and not na(event10High)
+    if close > event10High and not event10HighBroken and isBreakoutConfirmed(volume, currentAvgVol)
+        event10HighBroken := true
+        [volText, volColor, volSymbol, relVol] = getVolLabel(volume, currentAvgVol)
+        label.new(bar_index, high, volSymbol + volText + ' (Event 10m)', color = volColor, textcolor = color.white, style = label.style_label_down, size = size.small)
+
+    if close < event10Low and not event10LowBroken and isBreakoutConfirmed(volume, currentAvgVol)
+        event10LowBroken := true
+        [volText, volColor, volSymbol, relVol] = getVolLabel(volume, currentAvgVol)
+        label.new(bar_index, low, volSymbol + volText + ' (Event 10m)', color = volColor, textcolor = color.white, style = label.style_label_up, size = size.small)
