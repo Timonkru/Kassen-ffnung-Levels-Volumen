@@ -12,6 +12,16 @@ euColor      = input.color(color.blue,   'EU Farbe',          group = '15-Min Ca
 usColor      = input.color(color.orange, 'US/Gold Farbe',     group = '15-Min Candles')
 lineWidth    = input.int(2, 'Linienbreite', minval = 1, maxval = 5, group = '15-Min Candles')
 
+// === EINSTELLUNGEN HK50 ===
+showHK50     = input.bool(true,  'HK50 aktiv',                group = 'HK50 Spezial')
+showHK_230   = input.bool(true,  'HK50 02:30 Candle (15m)',   group = 'HK50 Spezial')
+hkColor      = input.color(color.purple, 'HK50 Farbe',        group = 'HK50 Spezial')
+
+// === EINSTELLUNGEN JPN225 ===
+showJPN      = input.bool(true,  'JPN225 aktiv',              group = 'JPN225 Spezial')
+showJPN_050  = input.bool(true,  'JPN225 00:50 Candle (10m)', group = 'JPN225 Spezial')
+jpnColor     = input.color(color.teal,   'JPN225 Farbe',      group = 'JPN225 Spezial')
+
 // === EINSTELLUNGEN 5-MIN ===
 show5MinEU   = input.bool(true,  'EU 5-Min Levels',           group = '5-Min Candles (1. & 4. Candle)')
 show5MinUS   = input.bool(true,  'US 5-Min Levels',           group = '5-Min Candles (1. & 4. Candle)')
@@ -50,6 +60,10 @@ breakoutVolThreshold = input.float(1.0, 'Min. Volumen für Durchbruch (x Durchsc
 // Timezone
 tz = 'Europe/Berlin'
 
+// Symbol-Erkennung für spezifische Märkte
+isHK50Symbol = str.contains(syminfo.ticker, "HK") or str.contains(syminfo.ticker, "HSI") or str.contains(syminfo.ticker, "HK50")
+isJPN225Symbol = str.contains(syminfo.ticker, "JPN") or str.contains(syminfo.ticker, "JP225") or str.contains(syminfo.ticker, "NKY") or str.contains(syminfo.ticker, "NIK")
+
 // Volumen-Durchschnitt aktueller TF
 currentAvgVol = ta.sma(volume, volPeriod)
 
@@ -69,10 +83,11 @@ isBreakoutConfirmed(vol, avgVol) =>
 [time15, high15, low15, open15, close15, vol15] = request.security(syminfo.tickerid, '15', [time, high, low, open, close, volume])
 avgVol15 = ta.sma(vol15, volPeriod)
 
-// Kassenzeiten: EU 09:00, US 15:30
+// Kassenzeiten: EU 09:00, US 15:30, HK50 02:30
 // 2. Candle nach Kasse
 isEU15_2nd = hour(time15, tz) == 9  and minute(time15, tz) == 15
 isUS15_2nd = hour(time15, tz) == 15 and minute(time15, tz) == 45
+isHK15_230 = hour(time15, tz) == 2  and minute(time15, tz) == 30
 // 7. Candle nach Kasse: EU 10:30, US 17:00
 isEU15_7th = hour(time15, tz) == 10 and minute(time15, tz) == 30
 isUS15_7th = hour(time15, tz) == 17 and minute(time15, tz) == 0
@@ -112,6 +127,15 @@ var line usLowLine_7  = na
 var box  usBox_7      = na
 var bool usHighBroken_7 = false
 var bool usLowBroken_7  = false
+
+// --- HK50 15m 02:30 Candle ---
+var float hkH15 = na
+var float hkL15 = na
+var line hkHighLine = na
+var line hkLowLine  = na
+var box  hkBox      = na
+var bool hkHighBroken = false
+var bool hkLowBroken  = false
 
 // ===== EU 15-Min: 2. Candle =====
 if isEU15_2nd and showEU and showEU_2nd15
@@ -221,15 +245,86 @@ if showUS and showUS_7th15 and not na(usH15_7) and showVol15Min
         [volText, volColor, volSymbol, relVol] = getVolLabel(volume, currentAvgVol)
         label.new(bar_index, low, volSymbol + volText + ' (US 7th)', color = volColor, textcolor = color.white, style = label.style_label_up, size = size.small)
 
+// ===== HK50 15-Min: 02:30 Candle =====
+if isHK15_230 and showHK50 and showHK_230 and isHK50Symbol
+    hkH15 := high15
+    hkL15 := low15
+    hkHighBroken := false
+    hkLowBroken  := false
+
+    line.delete(hkHighLine)
+    line.delete(hkLowLine)
+    box.delete(hkBox)
+
+    hkBox := box.new(bar_index, high15, bar_index + 1, low15, border_color = hkColor, bgcolor = color.new(hkColor, 90), border_width = lineWidth, text = 'HK50 02:30 (15min)', text_color = hkColor, text_size = size.small)
+    hkHighLine := line.new(bar_index, high15, bar_index + 1, high15, color = hkColor, width = lineWidth, extend = extend.right)
+    hkLowLine  := line.new(bar_index, low15,  bar_index + 1, low15,  color = hkColor, width = lineWidth, extend = extend.right)
+
+// Check HK50 15-Min Durchbrüche
+if showHK50 and showHK_230 and not na(hkH15) and showVol15Min and isHK50Symbol
+    if close > hkH15 and not hkHighBroken and isBreakoutConfirmed(volume, currentAvgVol)
+        hkHighBroken := true
+        [volText, volColor, volSymbol, relVol] = getVolLabel(volume, currentAvgVol)
+        label.new(bar_index, high, volSymbol + volText + ' (HK50 02:30)', color = volColor, textcolor = color.white, style = label.style_label_down, size = size.small)
+
+    if close < hkL15 and not hkLowBroken and isBreakoutConfirmed(volume, currentAvgVol)
+        hkLowBroken := true
+        [volText, volColor, volSymbol, relVol] = getVolLabel(volume, currentAvgVol)
+        label.new(bar_index, low, volSymbol + volText + ' (HK50 02:30)', color = volColor, textcolor = color.white, style = label.style_label_up, size = size.small)
+
 // Marker nur für 15-Min Chart
 plotshape(isEU15_2nd and showEU and showEU_2nd15 and timeframe.period == '15', 'EU 15min 2nd', shape.triangleup,   location.belowbar, euColor, size = size.small)
 plotshape(isEU15_7th and showEU and showEU_7th15 and timeframe.period == '15', 'EU 15min 7th', shape.triangledown, location.abovebar, euColor, size = size.small)
 plotshape(isUS15_2nd and showUS and showUS_2nd15 and timeframe.period == '15', 'US 15min 2nd', shape.triangleup,   location.belowbar, usColor, size = size.small)
 plotshape(isUS15_7th and showUS and showUS_7th15 and timeframe.period == '15', 'US 15min 7th', shape.triangledown, location.abovebar, usColor, size = size.small)
+plotshape(isHK15_230 and showHK50 and showHK_230 and timeframe.period == '15' and isHK50Symbol, 'HK50 02:30',   shape.diamond,      location.belowbar, hkColor, size = size.small)
+
+// === NEU: JPN225 10-MIN CANDLE 00:50 ===
+[time10, high10, low10, open10, close10, vol10] = request.security(syminfo.tickerid, '10', [time, high, low, open, close, volume])
+avgVol10 = ta.sma(vol10, volPeriod)
+
+isJPN10_050 = hour(time10, tz) == 0 and minute(time10, tz) == 50
+
+var float jpnH10 = na
+var float jpnL10 = na
+var line jpnHighLine = na
+var line jpnLowLine  = na
+var box  jpnBox      = na
+var bool jpnHighBroken = false
+var bool jpnLowBroken  = false
+
+// ===== JPN225 10-Min: 00:50 Candle =====
+if isJPN10_050 and showJPN and showJPN_050 and isJPN225Symbol
+    jpnH10 := high10
+    jpnL10 := low10
+    jpnHighBroken := false
+    jpnLowBroken  := false
+
+    line.delete(jpnHighLine)
+    line.delete(jpnLowLine)
+    box.delete(jpnBox)
+
+    jpnBox := box.new(bar_index, high10, bar_index + 1, low10, border_color = jpnColor, bgcolor = color.new(jpnColor, 90), border_width = lineWidth, text = 'JPN225 00:50 (10min)', text_color = jpnColor, text_size = size.small)
+    jpnHighLine := line.new(bar_index, high10, bar_index + 1, high10, color = jpnColor, width = lineWidth, extend = extend.right)
+    jpnLowLine  := line.new(bar_index, low10,  bar_index + 1, low10,  color = jpnColor, width = lineWidth, extend = extend.right)
+
+// Check JPN225 10-Min Durchbrüche
+if showJPN and showJPN_050 and not na(jpnH10) and showVol15Min and isJPN225Symbol
+    if close > jpnH10 and not jpnHighBroken and isBreakoutConfirmed(volume, currentAvgVol)
+        jpnHighBroken := true
+        [volText, volColor, volSymbol, relVol] = getVolLabel(volume, currentAvgVol)
+        label.new(bar_index, high, volSymbol + volText + ' (JPN225 00:50)', color = volColor, textcolor = color.white, style = label.style_label_down, size = size.small)
+
+    if close < jpnL10 and not jpnLowBroken and isBreakoutConfirmed(volume, currentAvgVol)
+        jpnLowBroken := true
+        [volText, volColor, volSymbol, relVol] = getVolLabel(volume, currentAvgVol)
+        label.new(bar_index, low, volSymbol + volText + ' (JPN225 00:50)', color = volColor, textcolor = color.white, style = label.style_label_up, size = size.small)
+
+// Marker für 10-Min Chart
+plotshape(isJPN10_050 and showJPN and showJPN_050 and timeframe.period == '10' and isJPN225Symbol, 'JPN225 00:50', shape.diamond, location.belowbar, jpnColor, size = size.small)
 
 // === NEU: PRE-MARKET LEVELS (30-MIN & 10-MIN) ===
 [time30, high30, low30, vol30] = request.security(syminfo.tickerid, '30', [time, high, low, volume])
-[time10, high10, low10, vol10] = request.security(syminfo.tickerid, '10', [time, high, low, volume])
 
 // 30-Min Bar vor EU-Kasse (08:30)
 isEU30PreMarket = hour(time30, tz) == 8 and minute(time30, tz) == 30
